@@ -1,13 +1,25 @@
+export interface StopInfo {
+  stanox: string;
+  name: string;
+  time: number;
+  eventType: "arrival" | "departure";
+  delayMinutes: number;
+}
+
 export interface TrainState {
   trainId: string;
   lat: number;
   lng: number;
   stanox: string;
+  stationName: string;
   status: "on-time" | "slight-delay" | "delayed";
   delayMinutes: number;
   lastUpdate: number;
   tocId: string;
   eventType: "arrival" | "departure";
+  platform?: string;
+  origin?: StopInfo;
+  recentStops: StopInfo[];
 }
 
 export interface TrainStats {

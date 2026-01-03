@@ -1,0 +1,19 @@
+name = "traintracker"
+main = "src/worker.ts"
+compatibility_date = "2026-01-02"
+assets = { directory = "dist" }
+
+[[containers]]
+class_name = "TrainServerContainer"
+image = "./Dockerfile"
+instance_type = "basic"
+max_instances = 3
+
+[[durable_objects.bindings]]
+name = "TRAIN_SERVER"
+class_name = "TrainServerContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TrainServerContainer"]
+

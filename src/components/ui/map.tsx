@@ -464,15 +464,29 @@ function MarkerTooltip({
     popupOptionsRef.current = popupOptions;
   }, [popupOptions]);
 
+  useEffect(() => {
+    if (!popupRef.current) return;
+    const popupElement = popupRef.current.getElement();
+    if (popupElement) {
+      const content = popupElement.querySelector(".maplibregl-popup-content") as HTMLElement;
+      if (content) {
+        content.style.background = "transparent";
+        content.style.boxShadow = "none";
+        content.style.padding = "0";
+        content.style.borderRadius = "0";
+        content.style.border = "none";
+      }
+      const tip = popupElement.querySelector(".maplibregl-popup-tip") as HTMLElement;
+      if (tip) {
+        tip.style.display = "none";
+      }
+    }
+  }, [mounted]);
+
   if (!mounted || !containerRef.current) return null;
 
   return createPortal(
-    <div
-      className={cn(
-        "rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md animate-in fade-in-0 zoom-in-95",
-        className
-      )}
-    >
+    <div className={cn("animate-in fade-in-0 zoom-in-95", className)}>
       {children}
     </div>,
     containerRef.current

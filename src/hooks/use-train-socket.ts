@@ -4,19 +4,36 @@ import type { TrainState, TrainStats, ServerMessage } from "@/types/train";
 const WS_RECONNECT_DELAY = 3000;
 const MAX_RETRIES_BEFORE_MOCK = 3;
 
+const now = Date.now();
 const MOCK_TRAINS: TrainState[] = [
-  { trainId: "1A01", lat: 51.5074, lng: -0.1278, stanox: "87701", status: "on-time", delayMinutes: 0, lastUpdate: Date.now(), tocId: "VT", eventType: "departure" },
-  { trainId: "1B02", lat: 51.4545, lng: -2.5879, stanox: "87702", status: "slight-delay", delayMinutes: 3, lastUpdate: Date.now(), tocId: "GW", eventType: "arrival" },
-  { trainId: "1C03", lat: 53.4808, lng: -2.2426, stanox: "87703", status: "delayed", delayMinutes: 12, lastUpdate: Date.now(), tocId: "NT", eventType: "departure" },
-  { trainId: "1D04", lat: 52.4862, lng: -1.8904, stanox: "87704", status: "on-time", delayMinutes: 0, lastUpdate: Date.now(), tocId: "XC", eventType: "arrival" },
-  { trainId: "1E05", lat: 55.9533, lng: -3.1883, stanox: "87705", status: "slight-delay", delayMinutes: 2, lastUpdate: Date.now(), tocId: "SR", eventType: "departure" },
-  { trainId: "1F06", lat: 53.8008, lng: -1.5491, stanox: "87706", status: "on-time", delayMinutes: 0, lastUpdate: Date.now(), tocId: "NT", eventType: "arrival" },
-  { trainId: "1G07", lat: 50.9097, lng: -1.4044, stanox: "87707", status: "delayed", delayMinutes: 8, lastUpdate: Date.now(), tocId: "SW", eventType: "departure" },
-  { trainId: "1H08", lat: 51.4816, lng: -3.1791, stanox: "87708", status: "on-time", delayMinutes: 0, lastUpdate: Date.now(), tocId: "TW", eventType: "arrival" },
-  { trainId: "2A01", lat: 51.5312, lng: -0.1248, stanox: "87709", status: "on-time", delayMinutes: 0, lastUpdate: Date.now(), tocId: "TL", eventType: "departure" },
-  { trainId: "2B02", lat: 51.5030, lng: -0.0136, stanox: "87710", status: "slight-delay", delayMinutes: 4, lastUpdate: Date.now(), tocId: "SE", eventType: "arrival" },
-  { trainId: "2C03", lat: 51.5172, lng: -0.0801, stanox: "87711", status: "on-time", delayMinutes: 0, lastUpdate: Date.now(), tocId: "TL", eventType: "departure" },
-  { trainId: "2D04", lat: 51.4636, lng: -0.1139, stanox: "87712", status: "delayed", delayMinutes: 15, lastUpdate: Date.now(), tocId: "SN", eventType: "arrival" },
+  {
+    trainId: "1A01", lat: 51.5074, lng: -0.1278, stanox: "87701", stationName: "London Euston", status: "on-time", delayMinutes: 0, lastUpdate: now, tocId: "VT", eventType: "departure",
+    origin: { stanox: "87700", name: "Manchester Piccadilly", time: now - 7200000, eventType: "departure", delayMinutes: 0 },
+    recentStops: [
+      { stanox: "87705", name: "Milton Keynes Central", time: now - 1800000, eventType: "departure", delayMinutes: 0 },
+    ],
+  },
+  {
+    trainId: "1B02", lat: 51.4545, lng: -2.5879, stanox: "87702", stationName: "Bristol Temple Meads", status: "slight-delay", delayMinutes: 3, lastUpdate: now, tocId: "GW", eventType: "arrival",
+    origin: { stanox: "87701", name: "London Paddington", time: now - 5400000, eventType: "departure", delayMinutes: 0 },
+    recentStops: [
+      { stanox: "87703", name: "Bath Spa", time: now - 900000, eventType: "departure", delayMinutes: 2 },
+    ],
+  },
+  {
+    trainId: "1C03", lat: 53.4808, lng: -2.2426, stanox: "87703", stationName: "Manchester Oxford Road", status: "delayed", delayMinutes: 12, lastUpdate: now, tocId: "NT", eventType: "departure",
+    origin: { stanox: "87702", name: "Liverpool Lime Street", time: now - 3600000, eventType: "departure", delayMinutes: 5 },
+    recentStops: [],
+  },
+  { trainId: "1D04", lat: 52.4862, lng: -1.8904, stanox: "87704", stationName: "Birmingham New Street", status: "on-time", delayMinutes: 0, lastUpdate: now, tocId: "XC", eventType: "arrival", recentStops: [] },
+  { trainId: "1E05", lat: 55.9533, lng: -3.1883, stanox: "87705", stationName: "Edinburgh Waverley", status: "slight-delay", delayMinutes: 2, lastUpdate: now, tocId: "SR", eventType: "departure", recentStops: [] },
+  { trainId: "1F06", lat: 53.8008, lng: -1.5491, stanox: "87706", stationName: "Leeds", status: "on-time", delayMinutes: 0, lastUpdate: now, tocId: "NT", eventType: "arrival", recentStops: [] },
+  { trainId: "1G07", lat: 50.9097, lng: -1.4044, stanox: "87707", stationName: "Southampton Central", status: "delayed", delayMinutes: 8, lastUpdate: now, tocId: "SW", eventType: "departure", recentStops: [] },
+  { trainId: "1H08", lat: 51.4816, lng: -3.1791, stanox: "87708", stationName: "Cardiff Central", status: "on-time", delayMinutes: 0, lastUpdate: now, tocId: "TW", eventType: "arrival", recentStops: [] },
+  { trainId: "2A01", lat: 51.5312, lng: -0.1248, stanox: "87709", stationName: "King's Cross", status: "on-time", delayMinutes: 0, lastUpdate: now, tocId: "TL", eventType: "departure", recentStops: [] },
+  { trainId: "2B02", lat: 51.5030, lng: -0.0136, stanox: "87710", stationName: "Canary Wharf", status: "slight-delay", delayMinutes: 4, lastUpdate: now, tocId: "SE", eventType: "arrival", recentStops: [] },
+  { trainId: "2C03", lat: 51.5172, lng: -0.0801, stanox: "87711", stationName: "Liverpool Street", status: "on-time", delayMinutes: 0, lastUpdate: now, tocId: "TL", eventType: "departure", recentStops: [] },
+  { trainId: "2D04", lat: 51.4636, lng: -0.1139, stanox: "87712", stationName: "Victoria", status: "delayed", delayMinutes: 15, lastUpdate: now, tocId: "SN", eventType: "arrival", recentStops: [] },
 ];
 
 export function useTrainSocket() {
