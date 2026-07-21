@@ -6,7 +6,7 @@ import { TrainMap } from "@/components/map/train-map";
 import { useTrainSocket } from "@/hooks/use-train-socket";
 
 function App() {
-  const { trains, stats, connected } = useTrainSocket();
+  const { trains, stats, connected, dataSource } = useTrainSocket();
 
   return (
     <ThemeProvider>
@@ -15,7 +15,12 @@ function App() {
         <div className="absolute inset-0 pt-12">
           <TrainMap trains={trains} />
         </div>
-        <StatsPanel total={stats.total} lastUpdate={stats.lastUpdate} connected={connected} />
+        <StatsPanel
+          total={stats.total}
+          lastUpdate={stats.lastUpdate}
+          connected={connected}
+          dataSource={dataSource}
+        />
         <Legend />
       </div>
     </ThemeProvider>

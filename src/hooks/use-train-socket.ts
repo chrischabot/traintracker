@@ -1,149 +1,240 @@
-import { useEffect, useRef, useState, useCallback } from "react";
-import type { TrainState, TrainStats, ServerMessage } from "@/types/train";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type {
+  FeedStatus,
+  ServerMessage,
+  TrainDataSource,
+  TrainState,
+  TrainStats,
+} from "@/types/train";
+import { createSyntheticTrainDataset } from "@/lib/synthetic-trains";
 
-const WS_RECONNECT_DELAY = 3000;
-const MAX_RETRIES_BEFORE_MOCK = 3;
+export const WS_RECONNECT_DELAY = 3000;
+export const MAX_RETRIES_BEFORE_SYNTHETIC = 3;
+export const CLIENT_PING_INTERVAL_MS = 15_000;
+export const SERVER_MESSAGE_TIMEOUT_MS = 45_000;
 
-const now = Date.now();
-const MOCK_TRAINS: TrainState[] = [
-  {
-    trainId: "1A01", lat: 51.5074, lng: -0.1278, stanox: "87701", stationName: "London Euston", status: "on-time", delayMinutes: 0, lastUpdate: now, tocId: "VT", eventType: "departure",
-    origin: { stanox: "87700", name: "Manchester Piccadilly", time: now - 7200000, eventType: "departure", delayMinutes: 0 },
-    recentStops: [
-      { stanox: "87705", name: "Milton Keynes Central", time: now - 1800000, eventType: "departure", delayMinutes: 0 },
-    ],
-  },
-  {
-    trainId: "1B02", lat: 51.4545, lng: -2.5879, stanox: "87702", stationName: "Bristol Temple Meads", status: "slight-delay", delayMinutes: 3, lastUpdate: now, tocId: "GW", eventType: "arrival",
-    origin: { stanox: "87701", name: "London Paddington", time: now - 5400000, eventType: "departure", delayMinutes: 0 },
-    recentStops: [
-      { stanox: "87703", name: "Bath Spa", time: now - 900000, eventType: "departure", delayMinutes: 2 },
-    ],
-  },
-  {
-    trainId: "1C03", lat: 53.4808, lng: -2.2426, stanox: "87703", stationName: "Manchester Oxford Road", status: "delayed", delayMinutes: 12, lastUpdate: now, tocId: "NT", eventType: "departure",
-    origin: { stanox: "87702", name: "Liverpool Lime Street", time: now - 3600000, eventType: "departure", delayMinutes: 5 },
-    recentStops: [],
-  },
-  { trainId: "1D04", lat: 52.4862, lng: -1.8904, stanox: "87704", stationName: "Birmingham New Street", status: "on-time", delayMinutes: 0, lastUpdate: now, tocId: "XC", eventType: "arrival", recentStops: [] },
-  { trainId: "1E05", lat: 55.9533, lng: -3.1883, stanox: "87705", stationName: "Edinburgh Waverley", status: "slight-delay", delayMinutes: 2, lastUpdate: now, tocId: "SR", eventType: "departure", recentStops: [] },
-  { trainId: "1F06", lat: 53.8008, lng: -1.5491, stanox: "87706", stationName: "Leeds", status: "on-time", delayMinutes: 0, lastUpdate: now, tocId: "NT", eventType: "arrival", recentStops: [] },
-  { trainId: "1G07", lat: 50.9097, lng: -1.4044, stanox: "87707", stationName: "Southampton Central", status: "delayed", delayMinutes: 8, lastUpdate: now, tocId: "SW", eventType: "departure", recentStops: [] },
-  { trainId: "1H08", lat: 51.4816, lng: -3.1791, stanox: "87708", stationName: "Cardiff Central", status: "on-time", delayMinutes: 0, lastUpdate: now, tocId: "TW", eventType: "arrival", recentStops: [] },
-  { trainId: "2A01", lat: 51.5312, lng: -0.1248, stanox: "87709", stationName: "King's Cross", status: "on-time", delayMinutes: 0, lastUpdate: now, tocId: "TL", eventType: "departure", recentStops: [] },
-  { trainId: "2B02", lat: 51.5030, lng: -0.0136, stanox: "87710", stationName: "Canary Wharf", status: "slight-delay", delayMinutes: 4, lastUpdate: now, tocId: "SE", eventType: "arrival", recentStops: [] },
-  { trainId: "2C03", lat: 51.5172, lng: -0.0801, stanox: "87711", stationName: "Liverpool Street", status: "on-time", delayMinutes: 0, lastUpdate: now, tocId: "TL", eventType: "departure", recentStops: [] },
-  { trainId: "2D04", lat: 51.4636, lng: -0.1139, stanox: "87712", stationName: "Victoria", status: "delayed", delayMinutes: 15, lastUpdate: now, tocId: "SN", eventType: "arrival", recentStops: [] },
-];
+export function isServerConnectionStale(
+  lastServerMessageAt: number,
+  now = Date.now(),
+) {
+  return now - lastServerMessageAt >= SERVER_MESSAGE_TIMEOUT_MS;
+}
+
+export function startServerMessageWatchdog(onTimeout: () => void) {
+  let lastServerMessageAt = Date.now();
+  let timedOut = false;
+  const timer = globalThis.setInterval(() => {
+    if (timedOut || !isServerConnectionStale(lastServerMessageAt)) return;
+    timedOut = true;
+    onTimeout();
+  }, CLIENT_PING_INTERVAL_MS);
+
+  return {
+    recordMessage() {
+      lastServerMessageAt = Date.now();
+    },
+    stop() {
+      globalThis.clearInterval(timer);
+    },
+  };
+}
+
+export function getReconnectDecision(consecutiveFailures: number) {
+  return {
+    useSynthetic: consecutiveFailures >= MAX_RETRIES_BEFORE_SYNTHETIC,
+    retryAfterMs: WS_RECONNECT_DELAY,
+  };
+}
+
+const EMPTY_STATS: TrainStats = {
+  total: 0,
+  onTime: 0,
+  slightDelay: 0,
+  delayed: 0,
+  lastUpdate: null,
+};
 
 export function useTrainSocket() {
   const [trains, setTrains] = useState<Map<string, TrainState>>(new Map());
-  const [stats, setStats] = useState<TrainStats>({
-    total: 0,
-    onTime: 0,
-    slightDelay: 0,
-    delayed: 0,
-    lastUpdate: Date.now(),
-  });
+  const [stats, setStats] = useState<TrainStats>(EMPTY_STATS);
   const [connected, setConnected] = useState(false);
   const [usingMock, setUsingMock] = useState(false);
+  const [dataSource, setDataSource] = useState<TrainDataSource>(null);
+  const [feedStatus, setFeedStatus] = useState<FeedStatus | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | undefined>(undefined);
   const retryCountRef = useRef(0);
+  const activeRef = useRef(false);
+  const dataSourceRef = useRef<TrainDataSource>(null);
+  const feedStatusRef = useRef<FeedStatus | null>(null);
+  const liveTrainsRef = useRef<Map<string, TrainState>>(new Map());
+  const liveStatsRef = useRef<TrainStats>(EMPTY_STATS);
 
-  const enableMockMode = useCallback(() => {
-    setUsingMock(true);
-    setConnected(true);
-    const mockMap = new Map(MOCK_TRAINS.map((t) => [t.trainId, t]));
-    setTrains(mockMap);
-    setStats({
-      total: MOCK_TRAINS.length,
-      onTime: MOCK_TRAINS.filter((t) => t.status === "on-time").length,
-      slightDelay: MOCK_TRAINS.filter((t) => t.status === "slight-delay").length,
-      delayed: MOCK_TRAINS.filter((t) => t.status === "delayed").length,
-      lastUpdate: Date.now(),
-    });
+  const selectDataSource = useCallback((source: TrainDataSource) => {
+    dataSourceRef.current = source;
+    setDataSource(source);
+    setUsingMock(source === "synthetic");
   }, []);
 
+  const enableSyntheticMode = useCallback(() => {
+    if (dataSourceRef.current === "synthetic") return;
+
+    const dataset = createSyntheticTrainDataset();
+    selectDataSource(dataset.source);
+    setTrains(new Map(dataset.trains.map((train) => [train.trainId, train])));
+    setStats(dataset.stats);
+  }, [selectDataSource]);
+
+  const activateLiveData = useCallback(() => {
+    selectDataSource("live");
+    setTrains(new Map(liveTrainsRef.current));
+    setStats(liveStatsRef.current);
+  }, [selectDataSource]);
+
+  const applyFeedStatus = useCallback((feed: FeedStatus) => {
+    feedStatusRef.current = feed;
+    setFeedStatus(feed);
+
+    if (feed.current) {
+      activateLiveData();
+    } else {
+      enableSyntheticMode();
+    }
+  }, [activateLiveData, enableSyntheticMode]);
+
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
-    if (usingMock) return;
+    if (
+      wsRef.current?.readyState === WebSocket.OPEN ||
+      wsRef.current?.readyState === WebSocket.CONNECTING
+    ) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws`);
+    let pingTimer: number | undefined;
+    let watchdog: ReturnType<typeof startServerMessageWatchdog> | undefined;
+    let failureHandled = false;
+
+    const clearSocketTimers = () => {
+      if (pingTimer) window.clearInterval(pingTimer);
+      watchdog?.stop();
+    };
+
+    const handleDisconnect = () => {
+      if (failureHandled) return;
+      if (wsRef.current !== ws) {
+        failureHandled = true;
+        clearSocketTimers();
+        return;
+      }
+      failureHandled = true;
+      clearSocketTimers();
+      setConnected(false);
+      if (wsRef.current === ws) wsRef.current = null;
+      if (!activeRef.current) return;
+
+      if (dataSourceRef.current === "live") {
+        selectDataSource(null);
+      }
+
+      retryCountRef.current++;
+      const decision = getReconnectDecision(retryCountRef.current);
+      if (decision.useSynthetic) enableSyntheticMode();
+
+      reconnectTimeoutRef.current = window.setTimeout(connect, decision.retryAfterMs);
+    };
 
     ws.onopen = () => {
-      setConnected(true);
-      retryCountRef.current = 0;
-    };
-
-    ws.onclose = () => {
-      setConnected(false);
-      wsRef.current = null;
-      retryCountRef.current++;
-
-      if (retryCountRef.current >= MAX_RETRIES_BEFORE_MOCK) {
-        enableMockMode();
-      } else {
-        reconnectTimeoutRef.current = window.setTimeout(connect, WS_RECONNECT_DELAY);
+      if (wsRef.current !== ws) {
+        ws.close();
+        return;
       }
+      setConnected(true);
+      pingTimer = window.setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ping" }));
+        }
+      }, CLIENT_PING_INTERVAL_MS);
+      watchdog = startServerMessageWatchdog(() => {
+        handleDisconnect();
+        ws.close(4000, "Server message timeout");
+      });
     };
+
+    ws.onclose = handleDisconnect;
 
     ws.onerror = () => {
+      if (wsRef.current !== ws) return;
+      handleDisconnect();
       ws.close();
     };
 
     ws.onmessage = (event) => {
+      if (wsRef.current !== ws) return;
+      watchdog?.recordMessage();
+      retryCountRef.current = 0;
       try {
         const message: ServerMessage = JSON.parse(event.data);
 
         switch (message.type) {
           case "snapshot":
-            setTrains(new Map(message.trains.map((t) => [t.trainId, t])));
-            setStats((prev) => ({ ...prev, total: message.trains.length, lastUpdate: message.timestamp }));
+            liveTrainsRef.current = new Map(message.trains.map((train) => [train.trainId, train]));
+            liveStatsRef.current = message.stats;
+            applyFeedStatus(message.feed);
             break;
 
-          case "update":
-            setTrains((prev) => {
-              const next = new Map(prev);
-              next.set(message.train.trainId, message.train);
-              return next;
-            });
+          case "update": {
+            const next = new Map(liveTrainsRef.current);
+            next.set(message.train.trainId, message.train);
+            liveTrainsRef.current = next;
+            if (feedStatusRef.current?.current) setTrains(next);
             break;
+          }
 
-          case "remove":
-            setTrains((prev) => {
-              const next = new Map(prev);
-              next.delete(message.trainId);
-              return next;
-            });
+          case "remove": {
+            const next = new Map(liveTrainsRef.current);
+            next.delete(message.trainId);
+            liveTrainsRef.current = next;
+            if (feedStatusRef.current?.current) setTrains(next);
             break;
+          }
 
-          case "stats":
-            setStats({
+          case "stats": {
+            const nextStats = {
               total: message.total,
               onTime: message.onTime,
               slightDelay: message.slightDelay,
               delayed: message.delayed,
               lastUpdate: message.lastUpdate,
-            });
+            };
+            liveStatsRef.current = nextStats;
+            if (feedStatusRef.current?.current) setStats(nextStats);
+            break;
+          }
+
+          case "feed_status":
+            applyFeedStatus(message.feed);
             break;
         }
       } catch {
+        return;
       }
     };
 
     wsRef.current = ws;
-  }, [usingMock, enableMockMode]);
+  }, [applyFeedStatus, enableSyntheticMode, selectDataSource]);
 
   useEffect(() => {
+    activeRef.current = true;
     connect();
 
     return () => {
+      activeRef.current = false;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
-      wsRef.current?.close();
+      const socket = wsRef.current;
+      wsRef.current = null;
+      socket?.close();
     };
   }, [connect]);
 
@@ -152,5 +243,7 @@ export function useTrainSocket() {
     stats,
     connected,
     usingMock,
+    dataSource,
+    feedStatus,
   };
 }

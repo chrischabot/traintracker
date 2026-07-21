@@ -1,5 +1,6 @@
 // Source: https://wiki.openraildata.com/index.php/TOC_Codes
 export const TOC_NAMES: Record<string, string> = {
+  "synthetic:operator:demo": "Demonstration service",
   "AW": "Transport for Wales",
   "CC": "c2c",
   "CH": "Chiltern Railways",

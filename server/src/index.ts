@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
-import { NetworkRailStompClient } from "./stomp-client.js";
+import { deriveFeedStatus, NetworkRailStompClient } from "./stomp-client.js";
 import { TrainStateManager } from "./train-state.js";
 import { ClientWebSocketServer } from "./websocket-server.js";
 import { parseTrustMessages } from "./trust-parser.js";
@@ -14,10 +14,16 @@ const NETWORK_RAIL_USERNAME = process.env.NETWORK_RAIL_USERNAME || "";
 const NETWORK_RAIL_PASSWORD = process.env.NETWORK_RAIL_PASSWORD || "";
 
 function loadStanoxLookup(): Record<string, StanoxLocation> {
-  const lookupPath = path.resolve(__dirname, "../public/stanox-lookup.json");
+  const lookupPaths = [
+    path.resolve(__dirname, "../public/stanox-lookup.json"),
+    path.resolve(__dirname, "../../public/stanox-lookup.json"),
+  ];
+  const lookupPath = lookupPaths.find((candidate) => fs.existsSync(candidate));
 
-  if (!fs.existsSync(lookupPath)) {
-    console.warn("[Server] stanox-lookup.json not found, using empty lookup");
+  if (!lookupPath) {
+    console.warn(
+      `[Server] stanox-lookup.json not found in ${lookupPaths.join(" or ")}, using empty lookup`,
+    );
     return {};
   }
 
@@ -36,7 +42,7 @@ function main(): void {
   const stanoxLookup = loadStanoxLookup();
   console.log(`[Server] Loaded ${Object.keys(stanoxLookup).length} STANOX locations`);
 
-  let wsServer: ClientWebSocketServer;
+  let stompClient: NetworkRailStompClient | null = null;
 
   const stateManager = new TrainStateManager(stanoxLookup, {
     onUpdate: (train) => wsServer?.broadcastUpdate(train),
@@ -44,15 +50,14 @@ function main(): void {
     onStats: (stats) => wsServer?.broadcastStats(stats),
   });
 
-  wsServer = new ClientWebSocketServer(WS_PORT, {
+  const wsServer = new ClientWebSocketServer(WS_PORT, {
     getSnapshot: () => stateManager.getAllTrains(),
     getStats: () => stateManager.getStats(),
+    getFeedStatus: () => stompClient?.getStatus() ?? deriveFeedStatus(false, null),
   });
 
   stateManager.start();
   wsServer.start();
-
-  let stompClient: NetworkRailStompClient | null = null;
 
   if (NETWORK_RAIL_USERNAME && NETWORK_RAIL_PASSWORD) {
     let eventCount = 0;
@@ -70,7 +75,8 @@ function main(): void {
         if (batchCount <= 5 || batchCount % 20 === 0) {
           console.log(`[Server] Batch #${batchCount}: ${events.length} events, total ${eventCount} events processed`);
         }
-      }
+      },
+      (status) => wsServer.broadcastFeedStatus(status),
     );
     stompClient.connect();
   }

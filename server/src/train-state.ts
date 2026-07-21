@@ -12,8 +12,8 @@ const PERSIST_INTERVAL_MS = 30 * 1000;
 const MAX_RECENT_STOPS = 5;
 const STATE_FILE_PATH = path.resolve(__dirname, "../data/train-state.json");
 
-interface PersistedState {
-  version: number;
+interface LegacyPersistedState {
+  version: 1;
   savedAt: number;
   trains: TrainState[];
 }
@@ -22,16 +22,25 @@ interface InternalTrainState extends TrainState {
   receivedAt: number;
 }
 
+interface PersistedState {
+  version: 2;
+  savedAt: number;
+  lastUpdateAt: number | null;
+  trains: InternalTrainState[];
+}
+
 export class TrainStateManager {
   private trains = new Map<string, InternalTrainState>();
   private stanoxLookup: Map<string, StanoxLocation>;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private persistTimer: ReturnType<typeof setInterval> | null = null;
+  private metricsTimer: ReturnType<typeof setInterval> | null = null;
   private onUpdate: (train: TrainState) => void;
   private onRemove: (trainId: string) => void;
   private onStats: (stats: TrainStats) => void;
   private unknownStanoxCount = 0;
   private knownStanoxCount = 0;
+  private lastUpdateAt: number | null = null;
 
   constructor(
     stanoxLookup: Record<string, StanoxLocation>,
@@ -51,7 +60,7 @@ export class TrainStateManager {
     this.loadState();
     this.cleanupTimer = setInterval(() => this.cleanupStaleTrains(), CLEANUP_INTERVAL_MS);
     this.persistTimer = setInterval(() => this.saveState(), PERSIST_INTERVAL_MS);
-    setInterval(() => {
+    this.metricsTimer = setInterval(() => {
       if (this.unknownStanoxCount > 0 || this.knownStanoxCount > 0) {
         const total = this.unknownStanoxCount + this.knownStanoxCount;
         const pct = Math.round((this.knownStanoxCount / total) * 100);
@@ -72,6 +81,10 @@ export class TrainStateManager {
       clearInterval(this.persistTimer);
       this.persistTimer = null;
     }
+    if (this.metricsTimer) {
+      clearInterval(this.metricsTimer);
+      this.metricsTimer = null;
+    }
     this.saveState();
     console.log("[TrainState] State manager stopped");
   }
@@ -84,9 +97,9 @@ export class TrainStateManager {
       }
 
       const data = fs.readFileSync(STATE_FILE_PATH, "utf-8");
-      const state: PersistedState = JSON.parse(data);
+      const state = JSON.parse(data) as PersistedState | LegacyPersistedState;
 
-      if (state.version !== 1) {
+      if (state.version !== 1 && state.version !== 2) {
         console.warn("[TrainState] State version mismatch, starting fresh");
         return;
       }
@@ -95,17 +108,29 @@ export class TrainStateManager {
       const maxAge = STALE_THRESHOLD_MS;
       let loadedCount = 0;
 
-      for (const train of state.trains) {
-        const age = now - train.lastUpdate;
+      const persistedTrains: InternalTrainState[] =
+        state.version === 2
+          ? state.trains
+          : state.trains.map((train) => ({
+              ...train,
+              receivedAt: train.lastUpdate,
+            }));
+
+      for (const train of persistedTrains) {
+        const age = now - train.receivedAt;
         if (age < maxAge) {
-          const internal: InternalTrainState = {
-            ...train,
-            receivedAt: state.savedAt,
-          };
-          this.trains.set(train.trainId, internal);
+          this.trains.set(train.trainId, train);
           loadedCount++;
         }
       }
+
+      this.lastUpdateAt =
+        state.version === 2
+          ? state.lastUpdateAt
+          : persistedTrains.reduce<number | null>(
+              (latest, train) => latest === null ? train.receivedAt : Math.max(latest, train.receivedAt),
+              null,
+            );
 
       console.log(`[TrainState] Loaded ${loadedCount} trains from saved state (saved ${Math.round((now - state.savedAt) / 1000)}s ago)`);
       this.broadcastStats();
@@ -121,10 +146,11 @@ export class TrainStateManager {
         fs.mkdirSync(dir, { recursive: true });
       }
 
-      const trains = this.getAllTrains();
+      const trains = Array.from(this.trains.values());
       const state: PersistedState = {
-        version: 1,
+        version: 2,
         savedAt: Date.now(),
+        lastUpdateAt: this.lastUpdateAt,
         trains,
       };
 
@@ -169,6 +195,7 @@ export class TrainStateManager {
       delayMinutes: 0,
     };
 
+    const receivedAt = Date.now();
     const train: InternalTrainState = {
       trainId: event.trainId,
       lat: location.lat,
@@ -182,10 +209,11 @@ export class TrainStateManager {
       eventType: "departure",
       origin: originStop,
       recentStops: [],
-      receivedAt: Date.now(),
+      receivedAt,
     };
 
     this.trains.set(event.trainId, train);
+    this.lastUpdateAt = receivedAt;
     this.onUpdate(this.toExternalState(train));
     this.broadcastStats();
   }
@@ -240,6 +268,7 @@ export class TrainStateManager {
       return;
     }
 
+    const receivedAt = Date.now();
     const train: InternalTrainState = {
       trainId: event.trainId,
       lat,
@@ -255,10 +284,11 @@ export class TrainStateManager {
       platform: event.platform,
       origin: origin || existing?.origin,
       recentStops,
-      receivedAt: Date.now(),
+      receivedAt,
     };
 
     this.trains.set(event.trainId, train);
+    this.lastUpdateAt = receivedAt;
     this.onUpdate(this.toExternalState(train));
     this.broadcastStats();
   }
@@ -266,6 +296,7 @@ export class TrainStateManager {
   private handleCancellation(event: ParsedTrainEvent): void {
     if (this.trains.has(event.trainId)) {
       this.trains.delete(event.trainId);
+      this.lastUpdateAt = Date.now();
       this.onRemove(event.trainId);
       this.broadcastStats();
     }
@@ -279,14 +310,17 @@ export class TrainStateManager {
       this.trains.delete(event.trainId);
       this.onRemove(event.trainId);
 
+      const receivedAt = Date.now();
       const updated: InternalTrainState = {
         ...existing,
         trainId: event.newTrainId,
         lastUpdate: event.timestamp,
-        receivedAt: Date.now(),
+        receivedAt,
       };
       this.trains.set(event.newTrainId, updated);
+      this.lastUpdateAt = receivedAt;
       this.onUpdate(this.toExternalState(updated));
+      this.broadcastStats();
     }
   }
 
@@ -312,7 +346,8 @@ export class TrainStateManager {
   }
 
   private toExternalState(train: InternalTrainState): TrainState {
-    const { receivedAt: _, ...external } = train;
+    const { receivedAt, ...external } = train;
+    void receivedAt;
     return external;
   }
 
@@ -344,7 +379,7 @@ export class TrainStateManager {
       onTime,
       slightDelay,
       delayed,
-      lastUpdate: Date.now(),
+      lastUpdate: this.lastUpdateAt,
     };
   }
 

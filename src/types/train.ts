@@ -27,14 +27,24 @@ export interface TrainStats {
   onTime: number;
   slightDelay: number;
   delayed: number;
-  lastUpdate: number;
+  lastUpdate: number | null;
+}
+
+export type TrainDataSource = "live" | "synthetic" | null;
+
+export interface FeedStatus {
+  source: "network-rail-trust";
+  connected: boolean;
+  current: boolean;
+  lastMessageAt: number | null;
 }
 
 export type ServerMessage =
-  | { type: "snapshot"; trains: TrainState[]; timestamp: number }
+  | { type: "snapshot"; trains: TrainState[]; stats: TrainStats; feed: FeedStatus }
   | { type: "update"; train: TrainState }
   | { type: "remove"; trainId: string }
-  | { type: "stats"; total: number; onTime: number; slightDelay: number; delayed: number; lastUpdate: number }
+  | { type: "stats"; total: number; onTime: number; slightDelay: number; delayed: number; lastUpdate: number | null }
+  | { type: "feed_status"; feed: FeedStatus }
   | { type: "pong" };
 
 export type ClientMessage = { type: "ping" };

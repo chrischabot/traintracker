@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@stomp/stompjs": "^7.0.0",
-    "ws": "^8.18.0"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.29",

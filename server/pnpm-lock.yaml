@@ -12,8 +12,8 @@ importers:
         specifier: ^7.0.0
         version: 7.2.1
       ws:
-        specifier: ^8.18.0
-        version: 8.18.3
+        specifier: ^8.21.0
+        version: 8.21.1
     devDependencies:
       '@types/node':
         specifier: ^22.15.29
@@ -270,8 +270,8 @@ packages:
     engines: {node: '>= 8'}
     hasBin: true
 
-  ws@8.18.3:
-    resolution: {integrity: sha512-PEIGCY5tSlUt50cqyMXfCzX+oOPqN0vuGqWzbcJ2xvnkzkq46oOpz7dQaTDBdfICb4N14+GARUDw2XV2N4tvzg==}
+  ws@8.21.1:
+    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -458,4 +458,4 @@ snapshots:
     dependencies:
       isexe: 2.0.0
 
-  ws@8.18.3: {}
+  ws@8.21.1: {}
